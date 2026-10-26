@@ -175,6 +175,21 @@ def atomic_json(path, obj):
             tmp.unlink()
 
 
+def publish_exclusive(src, dest):
+    """Publish a completed temporary file without ever replacing a target.
+
+    Both paths belong to the same output directory/filesystem. A successful
+    hard link atomically claims *dest* if absent; if another writer wins,
+    FileExistsError leaves both its destination and our temp untouched.
+    Only the journal (atomic_json) intentionally uses os.replace().
+    """
+    src, dest = Path(src), Path(dest)
+    if src.is_symlink() or not src.is_file():
+        raise ValueError("rendering source is symlinked or non-regular: " + str(src))
+    os.link(src, dest, follow_symlinks=False)
+    src.unlink()
+
+
 def index_path(config):
     return Path(config["output_dir"]) / "run_index.json"
 
@@ -391,7 +406,12 @@ def run(config, resume=False, requested_workers=None, selected_frames=None):
                 retained = outdir / f"{dest.stem}.abandoned.{serial:03d}.png"
                 if not retained.exists() and not retained.is_symlink():
                     orphan_sha = sha256_file(orphan)
-                    orphan.rename(retained)
+                    try:
+                        publish_exclusive(orphan, retained)
+                    except FileExistsError:
+                        # Another writer claimed this generation after the
+                        # existence check; never overwrite its evidence.
+                        continue
                     current.setdefault("retained_orphans", []).append(
                         {"path": retained.name, "sha256": orphan_sha})
                     break
@@ -419,7 +439,10 @@ def run(config, resume=False, requested_workers=None, selected_frames=None):
                 raise ValueError("orphaned destination differs; refused overwrite: " + str(dest))
             tmp.unlink()
         else:
-            os.replace(tmp, dest)
+            # Hard-link publication is create-only even when a concurrent
+            # writer creates dest after the earlier existence check.
+            # In that race, raise and retain the .rendering.png evidence.
+            publish_exclusive(tmp, dest)
         current["outputs"][str(k)] = {"sha256": sha, "source_frame": k + config["source_frame_offset"],
                                      "enhanced_frame": k + config["enhanced_frame_offset"],
                                      "metrics": result["metrics"]}
