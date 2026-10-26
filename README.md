@@ -40,6 +40,19 @@ The synthetic generator uses 8-bit RGB PNGs at 16×16 for source frames and
 16-bit RGB PNGs at 32×32 for enhanced frames. It is **not** sample LifeR
 footage, a model checkpoint, or a claim of film-quality stabilization.
 
+## Read-only PNG source sequence fingerprints
+
+An optional [standalone Python inventory](vsr_sequence_inventory.py)
+provides bytewise SHA-256 identities for ordered PNG frame sequences,
+using the original versioned `OSF-VSR-SOURCE-SEQUENCE-v1` fingerprint
+contract. It can help verify source lineage before or after STAB4 without
+running neural models or changing the render method. It is **not a PNG
+decoder, full CRC audit, colour qualification or creative acceptance tool**.
+
+See the [sequence-inventory guide](docs/sequence-inventory.md). Its
+**18 independent synthetic unit tests** run with Python's standard library,
+without ComfyUI, inference, model weights or film footage.
+
 ## Verification and limitations
 
 - 15/15 synthetic engine tests passed on OSF's native Python 3.11,
