@@ -58,9 +58,22 @@ incorrectly declared with straight or premultiplied alpha. It still does not
 validate PNG CRCs, decode pixels or establish alpha premultiplication quality.
 Valid source-sequence fingerprint serialization is unchanged.
 
+The engine's input and output header checks now require a PNG IHDR chunk
+payload length of exactly 13 bytes. This rejects a malformed file before
+recording source identity or accepting a rendered output as verified. The
+check does not decode PNG pixels or check CRCs and does not alter the frozen
+STAB4 stabilisation calculations.
+
+Partial resume now rejects symlinked or non-regular previously recorded
+output frames, even when the symlink target's bytes match the journalled
+hash. Recovered, unjournalled destination frames must also be regular,
+non-symlink files before their hashes are compared. These checks avoid
+following potentially redirected paths and do not change the numerical
+stabilisation method.
+
 ## Verification and limitations
 
-- 15/15 synthetic engine tests passed on OSF's native Python 3.11,
+- 19/19 synthetic engine tests passed on OSF's native Python 3.11,
   OpenCV/NumPy runtime on 25 October 2026, including real native rendering.
 - This test suite checks manifests, integrity, unexpected files, resume,
   resource admission and a small actual OpenCV render.

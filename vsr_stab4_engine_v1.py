@@ -139,6 +139,10 @@ def png_header(path, expected_size):
         blob = stream.read(33)
     if len(blob) < 33 or blob[:8] != PNG_MAGIC or blob[12:16] != b"IHDR":
         raise ValueError("invalid PNG header: " + str(path))
+    # The PNG IHDR chunk must contain exactly 13 payload bytes. This is
+    # deliberately a header-integrity check, not complete CRC/pixel decoding.
+    if struct.unpack(">I", blob[8:12])[0] != 13:
+        raise ValueError("invalid PNG IHDR chunk length: " + str(path))
     width, height, bits, colour, compression, filtering, interlace = struct.unpack(">IIBBBBB", blob[16:29])
     if (width, height) != expected_size or bits not in (8, 16) or colour != 2 or compression or filtering or interlace:
         raise ValueError("must be noninterlaced RGB8/RGB16 with expected dimensions: " + str(path))
@@ -363,6 +367,11 @@ def run(config, resume=False, requested_workers=None, selected_frames=None):
         dest = outdir / frame_name(k)
         old = current["outputs"].get(str(k))
         if old:
+            # Resume must enforce the same regular-file contract as verify().
+            # Never follow a symlink merely because its target matches a
+            # recorded SHA-256 digest.
+            if dest.is_symlink() or not dest.is_file():
+                raise ValueError("recorded output is missing, symlinked or non-regular: " + str(dest))
             if sha256_file(dest) != old.get("sha256"):
                 raise ValueError("recorded frame has changed: " + str(dest))
             continue
@@ -397,7 +406,9 @@ def run(config, resume=False, requested_workers=None, selected_frames=None):
         dest = outdir / frame_name(k)
         if dest.exists() or dest.is_symlink():
             # Crash after previous atomic media creation but before journal update:
-            # accept only the byte-identical regenerated frame.
+            # accept only a regular, non-symlink, byte-identical frame.
+            if dest.is_symlink() or not dest.is_file():
+                raise ValueError("orphaned destination is symlinked or non-regular: " + str(dest))
             if sha256_file(dest) != sha:
                 raise ValueError("orphaned destination differs; refused overwrite: " + str(dest))
             tmp.unlink()
