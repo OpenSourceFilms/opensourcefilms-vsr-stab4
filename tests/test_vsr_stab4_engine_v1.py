@@ -134,6 +134,36 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expected dimensions"):
             engine.input_inventory(c)
 
+    def test_reject_invalid_png_ihdr_chunk_lengths_before_prepare(self):
+        # PNG IHDR must declare a 13-byte payload. Before this regression,
+        # a malformed chunk length still passed the engine's shallow header
+        # check and could be recorded as a valid input source sequence.
+        for bad_length in (0, 12, 14):
+            with self.subTest(declared_ihdr_length=bad_length):
+                frame = self.source / "f0001.png"
+                png(frame, 8, 4)
+                data = bytearray(frame.read_bytes())
+                data[8:12] = struct.pack(">I", bad_length)
+                frame.write_bytes(data)
+                with self.assertRaisesRegex(ValueError, "IHDR"):
+                    engine.input_inventory(self.config())
+
+    def test_verify_rejects_forged_output_with_invalid_ihdr_length(self):
+        c = self.config()
+        run = engine.prepared(c, False)
+        for k in range(5, 8):
+            dest = self.output / engine.frame_name(k)
+            png(dest, 16, 8, marker=k)
+            if k == 6:
+                malformed = bytearray(dest.read_bytes())
+                malformed[8:12] = struct.pack(">I", 0)
+                dest.write_bytes(malformed)
+            run["outputs"][str(k)] = {"sha256": engine.sha256_file(dest)}
+        run["status"] = "VERIFY_READY"
+        engine.atomic_json(engine.index_path(c), run)
+        with self.assertRaisesRegex(ValueError, "IHDR"):
+            engine.verify(c)
+
     def test_refuse_noncanonical_request(self):
         for update in (
             {"radius": 2}, {"target_width": 15}, {"frame_count": True},
@@ -185,6 +215,46 @@ class ContractTests(unittest.TestCase):
         with patch.object(engine, "workers_for", return_value=(1, 123, 999999)), \
              patch.object(engine, "stabilise_one", side_effect=AssertionError("must skip completed")):
             self.assertEqual(engine.run(c, resume=True, selected_frames=[5])["frames"], 3)
+
+    def test_partial_resume_rejects_recorded_symlinked_output(self):
+        c = self.config()
+        journal = engine.prepared(c, False)
+        sample = self.root / "identical_outside_result.png"
+        png(sample, 16, 8, marker=5)
+        dest = self.output / engine.frame_name(5)
+        dest.symlink_to(sample)
+        journal["outputs"]["5"] = {"sha256": engine.sha256_file(sample)}
+        engine.atomic_json(engine.index_path(c), journal)
+        with patch.object(engine, "workers_for", return_value=(1, 123, 999999)):
+            with self.assertRaisesRegex(ValueError, "symlink|non-regular"):
+                engine.run(c, resume=True, selected_frames=[5])
+        self.assertTrue(dest.is_symlink())
+        self.assertTrue(sample.is_file())
+        self.assertEqual(json.loads(engine.index_path(c).read_text())["status"], "PREPARED")
+
+    def test_orphaned_destination_cannot_be_symlinked_even_with_same_hash(self):
+        c = self.config()
+        engine.prepared(c, False)
+        sample = self.root / "outside_dest.png"
+        png(sample, 16, 8, marker=5)
+        dest = self.output / engine.frame_name(5)
+        dest.symlink_to(sample)
+
+        def fake_worker(task):
+            config, frame = task
+            temp = Path(config["output_dir"]) / (engine.frame_name(frame)[:-4] + ".rendering.png")
+            png(temp, 16, 8, marker=frame)
+            return {"frame": frame, "tmp": str(temp),
+                    "sha256": engine.sha256_file(temp), "metrics": {}}
+
+        with patch.object(engine, "workers_for", return_value=(1, 123, 999999)), \
+             patch.object(engine, "stabilise_one", side_effect=fake_worker):
+            with self.assertRaisesRegex(ValueError, "symlink|non-regular"):
+                engine.run(c, resume=True, selected_frames=[5])
+        self.assertTrue(dest.is_symlink())
+        self.assertEqual(engine.sha256_file(sample), engine.sha256_file(dest))
+        self.assertTrue((self.output / "f0005.rendering.png").is_file())
+        self.assertNotIn("5", json.loads(engine.index_path(c).read_text())["outputs"])
 
     def test_interrupted_temp_is_preserved_and_recovered(self):
         c = self.config()
