@@ -188,6 +188,31 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "output path must be absent"):
             engine.prepared(self.config(), False)
 
+    def test_reject_symlinked_run_index_on_resume_and_verify(self):
+        c = self.config()
+        engine.prepared(c, False)
+        journal = engine.index_path(c)
+        external = self.root / "external_run_index.json"
+        journal.rename(external)
+        journal.symlink_to(external)
+        self.assertTrue(external.is_file())
+        with self.assertRaisesRegex(ValueError, "journal.*symlink"):
+            engine.prepared(c, True)
+        with self.assertRaisesRegex(ValueError, "journal.*symlink"):
+            engine.verify(c)
+        # Neither attempt should change the external journal or its symlink.
+        self.assertTrue(journal.is_symlink())
+        self.assertEqual(json.loads(external.read_text())["status"], "PREPARED")
+
+    def test_reject_directory_at_run_index_path(self):
+        c = self.config()
+        self.output.mkdir()
+        engine.index_path(c).mkdir()
+        with self.assertRaisesRegex(ValueError, "journal.*non-regular"):
+            engine.prepared(c, True)
+        with self.assertRaisesRegex(ValueError, "journal.*non-regular"):
+            engine.verify(c)
+
     def test_refuse_stale_atomic_journal_temp(self):
         c = self.config()
         self.output.mkdir()
