@@ -182,6 +182,10 @@ def index_path(config):
 def prepared(config, resume):
     root = Path(config["output_dir"])
     idx = index_path(config)
+    # The integrity journal must be a real file inside this output tree.
+    # is_file() alone follows symlinks and would trust an external index.
+    if idx.is_symlink() or (idx.exists() and not idx.is_file()):
+        raise ValueError("run journal is symlinked or non-regular: " + str(idx))
     if idx.is_file():
         if not resume:
             raise ValueError("run already exists: specify --resume")
@@ -330,6 +334,8 @@ def stabilise_one(task):
 
 def verify(config):
     idx = index_path(config)
+    if idx.is_symlink() or (idx.exists() and not idx.is_file()):
+        raise ValueError("run journal is symlinked or non-regular: " + str(idx))
     if not idx.is_file():
         raise ValueError("no run_index.json")
     run = json.loads(idx.read_text(encoding="utf-8"))
