@@ -1,0 +1,30 @@
+name: STAB4 synthetic native acceptance
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-stabilizer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Native engine tests
+        run: python -B -m unittest discover -s tests -p 'test_vsr_stab4_engine_v1.py' -v
+      - name: End-to-end synthetic native generation
+        run: |
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          python examples/make_synthetic.py "$tmp/example"
+          python vsr_stab4_engine_v1.py probe "$tmp/example/request.json"
+          python vsr_stab4_engine_v1.py run "$tmp/example/request.json" --workers 1
+          python vsr_stab4_engine_v1.py verify "$tmp/example/request.json"
