@@ -164,7 +164,9 @@ class SourceInventoryTests(unittest.TestCase):
         self.assertTrue(selected.is_symlink())
 
     def test_pathname_replacement_during_read_invalidates_inventory(self):
-        selected = self.frames / "f0002.png"
+        # The hook fires on the very first fdopen (frame 0001), so it must
+        # replace *that* opened pathname, not a later file in the window.
+        selected = self.frames / "f0001.png"
         old = selected.read_bytes()
         newer = png(red=111)
         real_fdopen = os.fdopen
