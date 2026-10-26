@@ -64,6 +64,20 @@ recording source identity or accepting a rendered output as verified. The
 check does not decode PNG pixels or check CRCs and does not alter the frozen
 STAB4 stabilisation calculations.
 
+Completed render frames are now published **create-only** using an
+atomic hard-link claim on the same output filesystem. An existing PNG can
+never be replaced by a concurrent producer that creates the destination
+after the engine's prior existence check. The unpublished
+`.rendering.png` remains for inspection on a collision, and the frame is
+not recorded in the integrity journal. Interrupted-render
+`.abandoned.###.png` generations use the same create-only claim and
+advance to the next free generation if another process claims a name
+during recovery. The run journal itself still uses intentional atomic
+replacement because it tracks incremental progress. This does **not**
+constitute a cross-process lock for concurrent renders; one owner should
+control a given output run. Three synthetic collision tests enforce the
+no-overwrite contract without modifying frozen STAB4 maths.
+
 Partial resume now rejects symlinked or non-regular previously recorded
 output frames, even when the symlink target's bytes match the journalled
 hash. Recovered, unjournalled destination frames must also be regular,
@@ -76,8 +90,10 @@ stabilisation method.
 
 ## Verification and limitations
 
-- 19/19 synthetic engine tests passed on OSF's native Python 3.11,
-  OpenCV/NumPy runtime on 25 October 2026, including real native rendering.
+- The prior native qualification passed 19/19 engine tests on 25
+  October 2026. The current suite has 22 engine tests, including three
+  create-only publication and collision tests, and still runs a real native
+  render. Consult the current GitHub Actions run for acceptance.
 - This test suite checks manifests, integrity, unexpected files, resume,
   resource admission and a small actual OpenCV render.
 - The frozen algorithm is intentionally not changed here, including its
@@ -100,6 +116,6 @@ For upstream dependency notices and the tested runtime context, see
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). An isolated temporary
 Python 3.11 environment installed the exact pinned `requirements.txt` on
 25 October 2026 and completed a native synthetic generate/run/verify
-workflow. The current public test suite contains **19 engine tests and 21
+workflow. The current public test suite contains **22 engine tests and 21
 source-inventory tests**; see GitHub Actions for actual per-commit results.
 These checks are not full-shot creative approval.
