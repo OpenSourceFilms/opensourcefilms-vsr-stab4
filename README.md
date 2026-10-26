@@ -67,8 +67,11 @@ STAB4 stabilisation calculations.
 Partial resume now rejects symlinked or non-regular previously recorded
 output frames, even when the symlink target's bytes match the journalled
 hash. Recovered, unjournalled destination frames must also be regular,
-non-symlink files before their hashes are compared. These checks avoid
-following potentially redirected paths and do not change the numerical
+non-symlink files before their hashes are compared. The
+`run_index.json` integrity journal is also required to be a regular,
+non-symlinked file before resume or verification reads it; this prevents a
+path redirect into an external journal. These checks avoid following
+potentially redirected paths and do not change the numerical
 stabilisation method.
 
 ## Verification and limitations
@@ -96,5 +99,7 @@ code, checkpoints, original photography or model weights are bundled.
 For upstream dependency notices and the tested runtime context, see
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). An isolated temporary
 Python 3.11 environment installed the exact pinned `requirements.txt` on
-25 October 2026 and passed all 15 unit tests plus the three-frame synthetic
-native generate/run/verify workflow. This is not full-shot creative approval.
+25 October 2026 and completed a native synthetic generate/run/verify
+workflow. The current public test suite contains **19 engine tests and 21
+source-inventory tests**; see GitHub Actions for actual per-commit results.
+These checks are not full-shot creative approval.
