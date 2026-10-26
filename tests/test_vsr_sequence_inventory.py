@@ -1,12 +1,14 @@
 """Synthetic-only tests for portable read-only PNG source lineage."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -133,6 +135,77 @@ class SourceInventoryTests(unittest.TestCase):
         (self.frames/"f0002.png").symlink_to(self.frames/"f0001.png")
         with self.assertRaisesRegex(inv.InventoryError,"symlink"):
             inv.inventory(self.source)
+
+    def test_symlink_swap_after_precheck_cannot_hash_external_frame(self):
+        # The old path.is_symlink() then Path.open() sequence was racy:
+        # replace the checked frame just before os.open() and require that
+        # O_NOFOLLOW blocks the external link rather than hashing its bytes.
+        if not hasattr(os, "O_NOFOLLOW"):
+            self.skipTest("no O_NOFOLLOW support")
+        selected = self.frames / "f0002.png"
+        outside = self.root / "outside_frame.png"
+        outside.write_bytes(png(red=101))
+        expected = outside.read_bytes()
+        real_open = os.open
+        swapped = []
+
+        def swap_before_open(path, flags, *args, **kwargs):
+            if Path(path) == selected and not swapped:
+                selected.unlink()
+                selected.symlink_to(outside)
+                swapped.append(True)
+            return real_open(path, flags, *args, **kwargs)
+
+        with mock.patch.object(inv.os, "open", side_effect=swap_before_open):
+            with self.assertRaisesRegex(inv.InventoryError, "safely open"):
+                inv.inventory(self.source)
+        self.assertEqual(swapped, [True])
+        self.assertEqual(outside.read_bytes(), expected)
+        self.assertTrue(selected.is_symlink())
+
+    def test_pathname_replacement_during_read_invalidates_inventory(self):
+        # The hook fires on the very first fdopen (frame 0001), so it must
+        # replace *that* opened pathname, not a later file in the window.
+        selected = self.frames / "f0001.png"
+        old = selected.read_bytes()
+        newer = png(red=111)
+        real_fdopen = os.fdopen
+        swapped = []
+
+        def replace_after_open(fd, mode, *args, **kwargs):
+            if not swapped:
+                selected.unlink()
+                selected.write_bytes(newer)
+                swapped.append(True)
+            return real_fdopen(fd, mode, *args, **kwargs)
+
+        with mock.patch.object(inv.os, "fdopen", side_effect=replace_after_open):
+            with self.assertRaisesRegex(inv.InventoryError, "changed while hashing"):
+                inv.inventory(self.source)
+        self.assertEqual(swapped, [True])
+        self.assertNotEqual(selected.read_bytes(), old)
+        self.assertEqual(selected.read_bytes(), newer)
+
+    def test_swapped_fifo_is_refused_without_blocking(self):
+        if not (hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK")
+                and hasattr(os, "O_NOFOLLOW")):
+            self.skipTest("POSIX FIFO/no-follow flags unavailable")
+        selected = self.frames / "f0002.png"
+        real_open = os.open
+        swapped = []
+
+        def swap_before_open(path, flags, *args, **kwargs):
+            if Path(path) == selected and not swapped:
+                selected.unlink()
+                os.mkfifo(selected)
+                swapped.append(True)
+                self.assertTrue(flags & os.O_NONBLOCK)
+            return real_open(path, flags, *args, **kwargs)
+
+        with mock.patch.object(inv.os, "open", side_effect=swap_before_open):
+            with self.assertRaisesRegex(inv.InventoryError, "non-regular"):
+                inv.inventory(self.source)
+        self.assertEqual(swapped, [True])
 
     def test_symlinked_source_directory_refused(self):
         alias=self.root/"alias"
