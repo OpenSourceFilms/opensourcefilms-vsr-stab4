@@ -13,8 +13,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import struct
 import sys
 
@@ -92,9 +94,21 @@ def inventory(source):
         path = folder / filename
         if path.is_symlink() or not path.is_file():
             raise InventoryError("missing or symlink frame: " + filename)
-        before = path.stat()
+        # Refuse a symlink *at open time*, not only at the earlier path
+        # precheck. Follow neither a swapped symlink nor a non-regular device.
+        # O_NONBLOCK prevents a swapped FIFO from hanging this inventory.
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise InventoryError("secure no-follow frame opening unavailable")
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW |
+                         getattr(os, "O_NONBLOCK", 0))
+        except OSError as exc:
+            raise InventoryError("cannot safely open PNG frame: " + filename) from exc
         digest = hashlib.sha256()
-        with path.open("rb") as stream:
+        with os.fdopen(fd, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise InventoryError("non-regular PNG frame: " + filename)
             head = stream.read(26)
             if len(head) != 26 or head[:8] != PNG_SIG or head[12:16] != b"IHDR":
                 raise InventoryError("invalid PNG signature/IHDR: " + filename)
@@ -115,10 +129,19 @@ def inventory(source):
             digest.update(head)
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-        after = path.stat()
-        def identity(s):
-            return s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns
-        if identity(before) != identity(after):
+            after = os.fstat(stream.fileno())
+
+        # Pathname and descriptor identities must still match. A writer may
+        # replace the frame during hashing, including with another valid PNG.
+        def identity(st):
+            return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+        try:
+            named_after = path.lstat()
+        except OSError as exc:
+            raise InventoryError("frame disappeared while hashing: " + filename) from exc
+        if (identity(before) != identity(after)
+                or not stat.S_ISREG(named_after.st_mode)
+                or identity(after) != identity(named_after)):
             raise InventoryError("frame changed while hashing: " + filename)
         rows.append({
             "frame_index": index, "filename": filename, "sha256": digest.hexdigest(),
