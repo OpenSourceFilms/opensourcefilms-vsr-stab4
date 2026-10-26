@@ -32,8 +32,10 @@ python3 -B -m unittest discover -s tests -p 'test_vsr_sequence_inventory.py' -v
 
 The receipt is **create-only** and must be outside the source frame
 directory. Omit `--receipt` to print the inventory to standard output only.
-The 21 offline tests use small synthetic PNG images in temporary
-directories, so no film footage or OpenCV installation is required.
+The 24 offline tests use small synthetic PNG images in temporary
+directories, so no film footage or OpenCV installation is required. Three
+tests simulate a frame being swapped with a symlink, a different regular
+file or a FIFO during an inventory read.
 
 ## What the SHA-256 means
 
@@ -67,9 +69,15 @@ colour type. RGB PNGs cannot declare straight or premultiplied alpha;
 - The returned `source_path` is an explicit local path. Do not post
   private inventory receipts publicly without reviewing and redacting
   path and source information.
-- Input files and directories must remain stable while hashing. This
-  tool checks pre/post file identity but is **not** a defence against an
-  actively hostile, concurrently mutating filesystem.
+- Input files and directories must remain stable while hashing. On
+  POSIX systems with `O_NOFOLLOW`, each frame is opened without following
+  a last-component symlink; its PNG header and full SHA-256 are taken from
+  **the same regular-file descriptor**, and its final pathname identity
+  must still match that descriptor. A replaced frame or substituted FIFO
+  fails rather than producing a plausible receipt. Without `O_NOFOLLOW`
+  support, the inventory refuses to proceed. This narrows a time-of-check
+  versus time-of-use race; it is **not** a complete defence against
+  adversarial mutation of ancestor directories or network filesystems.
 
 For more robust read-only PNG sequence structure checks, including
 CRC validation, see the separate [native PNG audit in OSF's ComfyUI
