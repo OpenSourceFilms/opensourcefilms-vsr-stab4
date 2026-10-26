@@ -1,4 +1,5 @@
 """Offline stdlib validation and future OpenCV execution tests for frozen STAB4."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -280,6 +281,100 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(engine.sha256_file(sample), engine.sha256_file(dest))
         self.assertTrue((self.output / "f0005.rendering.png").is_file())
         self.assertNotIn("5", json.loads(engine.index_path(c).read_text())["outputs"])
+
+    def test_exclusive_publish_never_replaces_existing_review_frame(self):
+        src = self.root / "new_render.png"
+        dest = self.root / "review_frame.png"
+        png(src, 16, 8, marker=6)
+        png(dest, 16, 8, marker=109)
+        before_src, before_dest = src.read_bytes(), dest.read_bytes()
+        with self.assertRaises(FileExistsError):
+            engine.publish_exclusive(src, dest)
+        self.assertEqual(src.read_bytes(), before_src)
+        self.assertEqual(dest.read_bytes(), before_dest)
+
+        dest.unlink()
+        engine.publish_exclusive(src, dest)
+        self.assertFalse(src.exists())
+        self.assertEqual(dest.read_bytes(), before_src)
+
+    def test_new_frame_collision_after_precheck_cannot_overwrite_media(self):
+        # Simulates a second producer winning the target pathname exactly
+        # after run() checked it, but before atomic frame publication.
+        c = self.config()
+        dest = self.output / engine.frame_name(5)
+        temporary = self.output / "f0005.rendering.png"
+        native_link = os.link
+        collision = {"made": False}
+
+        def fake_work(task):
+            cfg, frame = task
+            tmp = Path(cfg["output_dir"]) / (engine.frame_name(frame)[:-4] + ".rendering.png")
+            png(tmp, 16, 8, marker=frame)
+            return {"frame": frame, "tmp": str(tmp),
+                    "sha256": engine.sha256_file(tmp), "metrics": {}}
+
+        def collide(src, target, **kwargs):
+            if Path(target) == dest and not collision["made"]:
+                png(dest, 16, 8, marker=201)
+                collision["made"] = True
+            return native_link(src, target, **kwargs)
+
+        expected_existing = self.root / "expected_external.png"
+        png(expected_existing, 16, 8, marker=201)
+        with patch.object(engine, "workers_for", return_value=(1, 1, 100000)), \
+             patch.object(engine, "stabilise_one", side_effect=fake_work), \
+             patch.object(engine.os, "link", side_effect=collide):
+            with self.assertRaises(FileExistsError):
+                engine.run(c, selected_frames=[5])
+        self.assertTrue(collision["made"])
+        self.assertEqual(dest.read_bytes(), expected_existing.read_bytes())
+        self.assertTrue(temporary.is_file(), "incomplete unpublished frame remains for inspection")
+        self.assertEqual(
+            json.loads(engine.index_path(c).read_text())["outputs"], {},
+            "a colliding destination must not enter the integrity journal",
+        )
+
+    def test_retained_orphan_generation_collision_cannot_overwrite_evidence(self):
+        c = self.config()
+        engine.prepared(c, False)
+        orphan = self.output / "f0005.rendering.png"
+        png(orphan, 16, 8, marker=13)
+        expected_orphan = orphan.read_bytes()
+        occupied = self.output / "f0005.abandoned.001.png"
+        candidate = self.output / "f0005.abandoned.002.png"
+        native_link = os.link
+        collision = {"made": False}
+
+        def fake_work(task):
+            cfg, frame = task
+            tmp = Path(cfg["output_dir"]) / (engine.frame_name(frame)[:-4] + ".rendering.png")
+            png(tmp, 16, 8, marker=frame)
+            return {"frame": frame, "tmp": str(tmp),
+                    "sha256": engine.sha256_file(tmp), "metrics": {}}
+
+        def collide(src, target, **kwargs):
+            if Path(target) == occupied and not collision["made"]:
+                png(occupied, 16, 8, marker=211)
+                collision["made"] = True
+            return native_link(src, target, **kwargs)
+
+        another = self.root / "expected_race_winner.png"
+        png(another, 16, 8, marker=211)
+        with patch.object(engine, "workers_for", return_value=(1, 1, 100000)), \
+             patch.object(engine, "stabilise_one", side_effect=fake_work), \
+             patch.object(engine.os, "link", side_effect=collide):
+            result = engine.run(c, resume=True, selected_frames=[5])
+        self.assertEqual(result["status"], "PARTIAL")
+        self.assertTrue(collision["made"])
+        self.assertEqual(occupied.read_bytes(), another.read_bytes())
+        self.assertEqual(candidate.read_bytes(), expected_orphan)
+        self.assertFalse(orphan.exists())
+        journal = json.loads(engine.index_path(c).read_text())
+        self.assertEqual(journal["retained_orphans"], [
+            {"path": candidate.name, "sha256": hashlib.sha256(expected_orphan).hexdigest()}
+        ])
+        self.assertIn("5", journal["outputs"])
 
     def test_interrupted_temp_is_preserved_and_recovered(self):
         c = self.config()
