@@ -50,8 +50,13 @@ running neural models or changing the render method. It is **not a PNG
 decoder, full CRC audit, colour qualification or creative acceptance tool**.
 
 See the [sequence-inventory guide](docs/sequence-inventory.md). Its
-**18 independent synthetic unit tests** run with Python's standard library,
+**21 independent synthetic unit tests** run with Python's standard library,
 without ComfyUI, inference, model weights or film footage.
+
+The inventory now also rejects malformed IHDR payload lengths and RGB files
+incorrectly declared with straight or premultiplied alpha. It still does not
+validate PNG CRCs, decode pixels or establish alpha premultiplication quality.
+Valid source-sequence fingerprint serialization is unchanged.
 
 ## Verification and limitations
 

@@ -98,6 +98,10 @@ def inventory(source):
             head = stream.read(26)
             if len(head) != 26 or head[:8] != PNG_SIG or head[12:16] != b"IHDR":
                 raise InventoryError("invalid PNG signature/IHDR: " + filename)
+            # PNG specifies an IHDR chunk payload of exactly 13 bytes.
+            # Checking its stated length does not imply full CRC/pixel parsing.
+            if struct.unpack(">I", head[8:12])[0] != 13:
+                raise InventoryError("invalid PNG IHDR length: " + filename)
             file_width, file_height = struct.unpack(">II", head[16:24])
             file_depth, colour = head[24], head[25]
             if (file_width, file_height, file_depth) != (width, height, depth):
@@ -106,6 +110,8 @@ def inventory(source):
                 raise InventoryError("expected RGB or RGBA PNG: " + filename)
             if colour == 6 and alpha == "none":
                 raise InventoryError("RGBA source incorrectly labelled alpha=none: " + filename)
+            if colour == 2 and alpha in ("straight", "premultiplied"):
+                raise InventoryError("RGB PNG has no alpha channel for declaration: " + filename)
             digest.update(head)
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)

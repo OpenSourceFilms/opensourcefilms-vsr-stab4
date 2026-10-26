@@ -32,7 +32,7 @@ python3 -B -m unittest discover -s tests -p 'test_vsr_sequence_inventory.py' -v
 
 The receipt is **create-only** and must be outside the source frame
 directory. Omit `--receipt` to print the inventory to standard output only.
-The 18 offline tests use small synthetic PNG images in temporary
+The 21 offline tests use small synthetic PNG images in temporary
 directories, so no film footage or OpenCV installation is required.
 
 ## What the SHA-256 means
@@ -52,7 +52,10 @@ payloads. Reordering, renaming, changing bytes or selecting a different
 frame window can therefore change the sequence identity. The inventory
 also records file size and PNG width/height/bit depth and rejects missing
 frames, direct symlinks, unsafe basename formatting and incompatible
-headers.
+headers. The basic header check requires PNG's 13-byte IHDR payload and
+ensures the declared alpha-channel presence agrees with the RGB/RGBA
+colour type. RGB PNGs cannot declare straight or premultiplied alpha;
+`alpha: "unknown"` is accepted with either RGB or RGBA.
 
 **Important limits:**
 - This is not a PNG decoder, CRC validation or proof of error-free pixels.

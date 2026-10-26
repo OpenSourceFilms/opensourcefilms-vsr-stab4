@@ -98,6 +98,36 @@ class SourceInventoryTests(unittest.TestCase):
         out=inv.inventory(self.source)
         self.assertEqual(out["frames"][0]["png_colour_type"],6)
 
+    def test_invalid_ihdr_chunk_length_is_not_a_valid_header(self):
+        # An IHDR payload is always exactly 13 bytes. Do not advertise an
+        # invalid chunk as a plausible PNG merely because bytes 16..25 look
+        # like an ordinary PNG dimension/depth/colour header.
+        for size in (0, 12, 14):
+            with self.subTest(ihdr_length=size):
+                malformed = bytearray(png())
+                malformed[8:12] = struct.pack(">I", size)
+                (self.frames/"f0001.png").write_bytes(malformed)
+                with self.assertRaisesRegex(inv.InventoryError,"IHDR"):
+                    inv.inventory(self.source)
+
+    def test_rgb_cannot_claim_straight_or_premultiplied_alpha(self):
+        # RGB colour type 2 does not store an alpha channel.
+        for alpha in ("straight", "premultiplied"):
+            with self.subTest(alpha=alpha):
+                self.source["alpha"] = alpha
+                with self.assertRaisesRegex(inv.InventoryError, "RGB.*alpha"):
+                    inv.inventory(self.source)
+
+    def test_unknown_alpha_is_valid_for_either_rgb_or_rgba(self):
+        self.source["alpha"] = "unknown"
+        first = inv.inventory(self.source)
+        self.assertEqual(first["frames"][0]["png_colour_type"], 2)
+        for i in range(1, 4):
+            (self.frames/f"f{i:04d}.png").write_bytes(png(colour=6))
+        second = inv.inventory(self.source)
+        self.assertEqual(second["frames"][0]["png_colour_type"], 6)
+        self.assertNotEqual(first["sequence_sha256"], second["sequence_sha256"])
+
     def test_symlinked_frame_refused(self):
         (self.frames/"f0002.png").unlink()
         (self.frames/"f0002.png").symlink_to(self.frames/"f0001.png")
